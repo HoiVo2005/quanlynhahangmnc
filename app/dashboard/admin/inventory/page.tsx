@@ -550,7 +550,7 @@ export default function InventoryStatsPage() {
                             <table className="w-full">
                                 <thead className="bg-slate-50 border-b border-slate-100">
                                     <tr>
-                                        {['Sản phẩm', 'Loại', 'Tồn đầu', `Nhập (${reportType})`, `Đã bán (phòng + mang về)`, `Xuất khác (hư hỏng)`, 'Doanh thu', 'Tồn cuối kỳ'].map((h, i) => (
+                                        {['Sản phẩm', 'Loại', 'Tồn đầu', `Nhập (${reportType})`, `Đã bán`, `Xuất khác (Tặng + mang về)`, 'Doanh thu', 'Tồn cuối kỳ'].map((h, i) => (
                                             <th
                                                 key={h}
                                                 className={`px-5 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider
