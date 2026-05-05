@@ -203,14 +203,13 @@ export default function InventoryStatsPage() {
             if (endDate) url += `&endDate=${endDate}`;
 
             const res = await fetch(url);
-            if (res.ok) {
-                const data = await res.json();
-                setStats(Array.isArray(data.stats) ? data.stats : []);
-                setLogs(Array.isArray(data.logs) ? data.logs : []);
-            } else {
-                setStats([]);
-                setLogs([]);
+            if (!res.ok) {
+                const errorData = await res.json();
+                throw new Error(errorData.error || 'Lỗi server');
             }
+            const data = await res.json();
+            setStats(Array.isArray(data.stats) ? data.stats : []);
+            setLogs(Array.isArray(data.logs) ? data.logs : []);
         } catch {
             toast.error('Lỗi khi tải dữ liệu thống kê kho');
         } finally {

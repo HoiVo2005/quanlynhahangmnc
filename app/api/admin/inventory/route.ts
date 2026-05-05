@@ -108,8 +108,11 @@ export async function GET(req: NextRequest) {
         /* 5. INVENTORY LOG                             */
         /* ───────────────────────────────────────────── */
 
+        // Kiểm tra an toàn sự tồn tại của model inventoryLog trong Prisma
+        const logModel = (prisma as any).inventoryLog;
+
         // Nhập trong kỳ
-        const restocksInPeriod = await (prisma as any).inventoryLog.groupBy({
+        const restocksInPeriod = logModel ? await logModel.groupBy({
             by: ['ProductId'],
             where: {
                 StoreId: storeId,
@@ -117,10 +120,10 @@ export async function GET(req: NextRequest) {
                 Quantity: { gt: 0 },
             },
             _sum: { Quantity: true },
-        });
+        }) : [];
 
         // Xuất lẻ trong kỳ
-        const exportsInPeriod = await (prisma as any).inventoryLog.groupBy({
+        const exportsInPeriod = logModel ? await logModel.groupBy({
             by: ['ProductId'],
             where: {
                 StoreId: storeId,
@@ -130,12 +133,12 @@ export async function GET(req: NextRequest) {
                 Type: { notIn: ['export', 'gift'] }
             },
             _sum: { Quantity: true },
-        });
+        }) : [];
 
         // 🔥 QUAN TRỌNG: KHÔNG excludeInit ở đây
 
         // Nhập từ start → hiện tại
-        const importSinceStart = await (prisma as any).inventoryLog.groupBy({
+        const importSinceStart = logModel ? await logModel.groupBy({
             by: ['ProductId'],
             where: {
                 StoreId: storeId,
@@ -143,10 +146,10 @@ export async function GET(req: NextRequest) {
                 Quantity: { gt: 0 },
             },
             _sum: { Quantity: true },
-        });
+        }) : [];
 
         // Xuất lẻ từ start → hiện tại
-        const exportSinceStart = await (prisma as any).inventoryLog.groupBy({
+        const exportSinceStart = logModel ? await logModel.groupBy({
             by: ['ProductId'],
             where: {
                 StoreId: storeId,
@@ -155,20 +158,20 @@ export async function GET(req: NextRequest) {
                 Type: { notIn: ['export', 'gift'] }
             },
             _sum: { Quantity: true },
-        });
+        }) : [];
 
         /* ───────────────────────────────────────────── */
         /* 6. LOG LIST                                  */
         /* ───────────────────────────────────────────── */
 
-        const logs = await (prisma as any).inventoryLog.findMany({
+        const logs = logModel ? await logModel.findMany({
             where: {
                 StoreId: storeId,
                 CreatedAt: { gte: startDate, lte: endDate },
             },
             include: { product: true },
             orderBy: { CreatedAt: 'desc' },
-        });
+        }) : [];
 
         /* ───────────────────────────────────────────── */
         /* 7. CALCULATE                                 */
