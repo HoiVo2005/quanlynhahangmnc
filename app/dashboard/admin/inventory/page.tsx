@@ -264,7 +264,7 @@ export default function InventoryStatsPage() {
 
         const headers = isHistory
             ? ['Ngày nhập', 'Sản phẩm', 'Biến động', 'Ghi chú', 'Trạng thái']
-            : ['Sản phẩm', 'Loại', 'Tồn đầu', 'Nhập trong kỳ', 'Đã bán (phòng + mang về)', 'Xuất khác (hư hỏng)', 'Doanh thu', 'Tồn cuối kỳ']; // Tiêu đề rõ ràng hơn
+            : ['Sản phẩm', 'Loại', 'Tồn đầu', 'Nhập trong kỳ', 'Đã bán', 'Xuất khác (tặng + mang về)', 'Doanh thu', 'Tồn cuối kỳ']; // Tiêu đề rõ ràng hơn
 
         const rows = isHistory
             ? logs.map(l => [
