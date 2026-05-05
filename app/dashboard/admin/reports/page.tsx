@@ -224,7 +224,7 @@ export default function ReportsPage() {
             const id = (inv.id ?? '').toLowerCase();
             if (searchTerm && !id.includes(searchTerm.toLowerCase())) return false;
 
-            const d = new Date(inv.createdAt);
+            const d = new Date(inv.startTime); // Sử dụng Giờ vào
             if (startDate) {
                 const s = new Date(startDate);
                 s.setHours(0, 0, 0, 0);
@@ -243,7 +243,7 @@ export default function ReportsPage() {
         const groups: Record<string, { total: number; count: number }> = {};
         filteredInvoices.forEach(inv => {
             if (inv.status !== 'paid') return;
-            const key = getGroupKey(new Date(inv.createdAt), reportType);
+            const key = getGroupKey(new Date(inv.startTime), reportType); // Nhóm theo Giờ vào
             if (!groups[key]) groups[key] = { total: 0, count: 0 };
             groups[key].total += inv.totalPrice;
             // Chỉ tính lượt thuê cho các phòng thực tế (không phải mang về/tặng)
@@ -278,7 +278,7 @@ export default function ReportsPage() {
         const rows = filteredInvoices.map(inv => [
             `#${inv.id.slice(0, 8).toUpperCase()}`,
             `Phòng ${(inv as any).roomNumber ?? ''}`,
-            new Date(inv.createdAt).toLocaleString('vi-VN'),
+            new Date(inv.startTime).toLocaleString('vi-VN'), // In ra giờ vào trong Excel
             Math.ceil(inv.totalPrice / 1000) * 1000,
             inv.status === 'paid' ? 'Đã thanh toán' : 'Chờ',
         ]);
@@ -583,7 +583,7 @@ export default function ReportsPage() {
                                                 Phòng {(invoice as any).roomNumber}
                                             </td>
                                             <td className="px-4 py-3 text-[11px] text-slate-500">
-                                                {new Date(invoice.createdAt).toLocaleString('vi-VN')}
+                                                {new Date(invoice.startTime).toLocaleString('vi-VN')}
                                             </td>
                                             <td className="px-4 py-3 text-[13px] font-bold text-slate-900">
                                                 {fmtVND(invoice.totalPrice)}đ

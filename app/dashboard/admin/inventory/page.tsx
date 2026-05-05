@@ -33,7 +33,7 @@ interface ProductStat {
     totalRestocked: number;
     totalSold: number;
     totalExported: number;
-    totalQuantity: number;
+    totalDecrement: number; // Đổi tên từ totalQuantity
     totalRevenue: number;
     currentStock: number;
     closingStock: number;
@@ -221,12 +221,12 @@ export default function InventoryStatsPage() {
     /* ── Derived data ─── */
 
     const bestSellers = useMemo(
-        () => [...stats].sort((a, b) => b.totalQuantity - a.totalQuantity).slice(0, 5),
+        () => [...stats].sort((a, b) => b.totalSold - a.totalSold).slice(0, 5), // Sử dụng totalSold cho bán chạy nhất
         [stats]
     );
 
     const slowMoving = useMemo(
-        () => [...stats].sort((a, b) => a.totalQuantity - b.totalQuantity).slice(0, 5),
+        () => [...stats].sort((a, b) => a.totalSold - b.totalSold).slice(0, 5), // Sử dụng totalSold cho bán chậm nhất
         [stats]
     );
 
@@ -238,7 +238,7 @@ export default function InventoryStatsPage() {
     const categoryData = useMemo(() => {
         const groups: Record<string, number> = {};
         stats.forEach(s => {
-            groups[s.category] = (groups[s.category] || 0) + s.totalQuantity;
+            groups[s.category] = (groups[s.category] || 0) + s.totalSold; // Sử dụng totalSold cho thống kê theo danh mục
         });
         return Object.entries(groups).map(([key, value]) => ({
             name: CAT_LABELS[key] ?? 'Khác',
@@ -264,7 +264,7 @@ export default function InventoryStatsPage() {
 
         const headers = isHistory
             ? ['Ngày nhập', 'Sản phẩm', 'Biến động', 'Ghi chú', 'Trạng thái']
-            : ['Sản phẩm', 'Loại', 'Tồn đầu', 'Đã nhập', 'Đã bán', 'Doanh thu', 'Tồn hiện tại'];
+            : ['Sản phẩm', 'Loại', 'Tồn đầu', 'Nhập trong kỳ', 'Đã bán (phòng + mang về)', 'Xuất khác (hư hỏng)', 'Doanh thu', 'Tồn cuối kỳ']; // Tiêu đề rõ ràng hơn
 
         const rows = isHistory
             ? logs.map(l => [
@@ -279,7 +279,8 @@ export default function InventoryStatsPage() {
                 CAT_LABELS[s.category] ?? s.category,
                 s.openingStock,
                 s.totalRestocked,
-                s.totalQuantity,
+                s.totalSold, // "Đã bán" trong CSV là totalSold
+                s.totalExported, // "Xuất khác" trong CSV
                 s.totalRevenue,
                 s.currentStock,
             ]);
@@ -437,16 +438,16 @@ export default function InventoryStatsPage() {
                         iconBg="bg-blue-50"
                         icon={<TrendingUp className="w-5 h-5 text-blue-500" />}
                         label="Bán chạy nhất"
-                        value={bestSellers[0]?.productName ?? '---'}
-                        sub={`Số lượng: ${bestSellers[0]?.totalQuantity ?? 0}`}
+                        value={bestSellers[0]?.productName || '---'}
+                        sub={`Số lượng: ${bestSellers[0]?.totalSold ?? 0}`}
                         subColor="text-blue-500"
                     />
                     <KpiCard
                         iconBg="bg-rose-50"
                         icon={<TrendingDown className="w-5 h-5 text-rose-500" />}
                         label="Bán chậm nhất"
-                        value={slowMoving[0]?.productName ?? '---'}
-                        sub={`Số lượng: ${slowMoving[0]?.totalQuantity ?? 0}`}
+                        value={slowMoving[0]?.productName || '---'}
+                        sub={`Số lượng: ${slowMoving[0]?.totalSold ?? 0}`}
                         subColor="text-rose-500"
                     />
                     <KpiCard
@@ -472,7 +473,7 @@ export default function InventoryStatsPage() {
                             <div className="h-[240px]">
                                 <ResponsiveContainer width="100%" height="100%">
                                     <BarChart data={bestSellers} layout="vertical">
-                                        <CartesianGrid strokeDasharray="3 3" horizontal vertical={false} stroke="#f3f4f6" />
+                                        <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f3f4f6" />
                                         <XAxis type="number" hide />
                                         <YAxis
                                             dataKey="productName"
@@ -482,9 +483,9 @@ export default function InventoryStatsPage() {
                                             width={110}
                                             tick={{ fontSize: 11, fontWeight: 600, fill: '#374151' }}
                                             tickFormatter={v => v.length > 14 ? v.slice(0, 14) + '…' : v}
-                                        />
+                                        /> {/* Đã bỏ vertical={false} vì là mặc định cho biểu đồ dọc */}
                                         <Tooltip content={<CustomBarTooltip />} cursor={{ fill: '#f9fafb' }} />
-                                        <Bar dataKey="totalQuantity" fill="#10b981" radius={[0, 6, 6, 0]} barSize={22} />
+                                        <Bar dataKey="totalSold" fill="#10b981" radius={[0, 6, 6, 0]} barSize={22} /> {/* Sử dụng totalSold */}
                                     </BarChart>
                                 </ResponsiveContainer>
                             </div>
@@ -549,7 +550,7 @@ export default function InventoryStatsPage() {
                             <table className="w-full">
                                 <thead className="bg-slate-50 border-b border-slate-100">
                                     <tr>
-                                        {['Sản phẩm', 'Loại', 'Tồn đầu', `Nhập (${reportType})`, `Bán (${reportType})`, `Xuất (${reportType})`, 'Doanh thu', 'Tồn cuối kỳ'].map((h, i) => (
+                                        {['Sản phẩm', 'Loại', 'Tồn đầu', `Nhập (${reportType})`, `Đã bán (phòng + mang về)`, `Xuất khác (hư hỏng)`, 'Doanh thu', 'Tồn cuối kỳ'].map((h, i) => (
                                             <th
                                                 key={h}
                                                 className={`px-5 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider

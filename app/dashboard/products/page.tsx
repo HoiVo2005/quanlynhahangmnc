@@ -231,7 +231,16 @@ export default function ProductsPage() {
         const res = await fetch('/api/products', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: editingProduct.id, name: formData.name, category: formData.category, price: parseFloat(formData.price), quantity: (editingProduct.quantity || 0) + inputQty, note: formData.note, logNote: formData.logNote }),
+          body: JSON.stringify({
+            id: editingProduct.id,
+            name: formData.name,
+            category: formData.category,
+            price: parseFloat(formData.price),
+            quantity: inputQty,
+            note: formData.note,
+            logNote: formData.logNote,
+            isRelative: true
+          }),
         });
         if (res.ok) { const updated = await res.json(); setProducts(products.map(p => p.id === updated.id ? updated : p)); toast.success('Cập nhật sản phẩm thành công'); handleCloseDialog(); }
       } else {
@@ -581,11 +590,10 @@ export default function ProductsPage() {
                             <span className="text-xs text-slate-400 font-normal ml-0.5">đ</span>
                           </td>
                           <td className="px-4 py-3 text-center">
-                            <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold ${
-                              isOut ? 'bg-rose-50 text-rose-600' :
+                            <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold ${isOut ? 'bg-rose-50 text-rose-600' :
                               isLow ? 'bg-amber-50 text-amber-600' :
-                              'bg-emerald-50 text-emerald-600'
-                            }`}>
+                                'bg-emerald-50 text-emerald-600'
+                              }`}>
                               {isOut ? 'Hết hàng' : isLow ? `⚠ ${product.quantity}` : product.quantity}
                             </span>
                           </td>
@@ -659,9 +667,8 @@ export default function ProductsPage() {
                           <button
                             key={p}
                             onClick={() => setPage(pageKey, p as number)}
-                            className={`min-w-[28px] h-7 px-2 rounded-lg text-xs font-medium border transition-colors ${
-                              curPage === p ? 'bg-indigo-600 text-white border-indigo-600' : 'border-slate-200 text-slate-600 hover:bg-white'
-                            }`}
+                            className={`min-w-[28px] h-7 px-2 rounded-lg text-xs font-medium border transition-colors ${curPage === p ? 'bg-indigo-600 text-white border-indigo-600' : 'border-slate-200 text-slate-600 hover:bg-white'
+                              }`}
                           >
                             {p}
                           </button>

@@ -57,50 +57,52 @@ export async function GET(req: NextRequest) {
         });
 
         /* ───────────────────────────────────────────── */
-        /* 3. PAID INVOICES & SESSIONS                  */
+        /* 3. SALES FROM PAID INVOICES ONLY             */
         /* ───────────────────────────────────────────── */
 
-        // Lấy danh sách ID các phiên phòng trong kỳ (không tính các phòng bị hủy)
+        // Tìm các phiên phòng BẮT ĐẦU trong kỳ và ĐÃ THANH TOÁN (có hóa đơn)
+        // Sử dụng StartTime thay vì CreatedAt của Invoice
         const sessionsInPeriod = await prisma.roomSession.findMany({
             where: {
                 StoreId: storeId,
-                Status: { not: 'cancelled' },
                 StartTime: { gte: startDate, lte: endDate },
+                // Chỉ tính những phòng đã chốt (tránh tính nhầm hàng đang dùng trong phòng chưa thanh toán vào báo cáo doanh thu/bán chạy)
+                OR: [
+                    { Status: 'completed' },
+                    { Invoices: { some: { Status: 'paid' } } }
+                ]
             },
             select: { Id: true },
         });
         const sessionIdsInPeriod = sessionsInPeriod.map(s => s.Id);
 
-        // Lấy danh sách ID các phiên phòng từ lúc bắt đầu xem báo cáo đến hiện tại
+        // Tương tự cho mốc tính tồn đầu
         const sessionsSinceStart = await prisma.roomSession.findMany({
             where: {
                 StoreId: storeId,
-                Status: { not: 'cancelled' },
                 StartTime: { gte: startDate },
+                OR: [
+                    { Status: 'completed' },
+                    { Invoices: { some: { Status: 'paid' } } }
+                ]
             },
             select: { Id: true },
         });
         const sessionIdsSinceStart = sessionsSinceStart.map(s => s.Id);
 
-        /* ───────────────────────────────────────────── */
-        /* 4. SALES (ONLY FROM PAID BILLS)              */
-        /* ───────────────────────────────────────────── */
+        // Bán trong kỳ
+        const salesInPeriod = await prisma.orderItem.groupBy({
+            by: ['ProductId'],
+            where: { RoomSessionId: { in: sessionIdsInPeriod } },
+            _sum: { Quantity: true },
+        });
 
-        // Bán trong kỳ: Toàn bộ món trong các bill đã thanh toán thành công trong kỳ này
-        const salesInPeriod = sessionIdsInPeriod.length > 0
-            ? await prisma.orderItem.groupBy({
-                by: ['ProductId'],
-                where: { RoomSessionId: { in: sessionIdsInPeriod } },
-                _sum: { Quantity: true },
-            }) : [];
-
-        // Bán từ lúc bắt đầu xem báo cáo đến nay (để phục vụ tính tồn đầu chính xác)
-        const salesSinceStart = sessionIdsSinceStart.length > 0
-            ? await prisma.orderItem.groupBy({
-                by: ['ProductId'],
-                where: { RoomSessionId: { in: sessionIdsSinceStart } },
-                _sum: { Quantity: true },
-            }) : [];
+        // Bán từ mốc xem báo cáo đến hiện tại
+        const salesSinceStart = await prisma.orderItem.groupBy({
+            by: ['ProductId'],
+            where: { RoomSessionId: { in: sessionIdsSinceStart } },
+            _sum: { Quantity: true },
+        });
 
         /* ───────────────────────────────────────────── */
         /* 5. INVENTORY LOG                             */
@@ -124,6 +126,8 @@ export async function GET(req: NextRequest) {
                 StoreId: storeId,
                 CreatedAt: { gte: startDate, lte: endDate },
                 Quantity: { lt: 0 },
+                // Không tính các log mang về/tặng vì đã tính ở mục Sales (OrderItem)
+                Type: { notIn: ['export', 'gift'] }
             },
             _sum: { Quantity: true },
         });
@@ -148,6 +152,7 @@ export async function GET(req: NextRequest) {
                 StoreId: storeId,
                 CreatedAt: { gte: startDate },
                 Quantity: { lt: 0 },
+                Type: { notIn: ['export', 'gift'] }
             },
             _sum: { Quantity: true },
         });

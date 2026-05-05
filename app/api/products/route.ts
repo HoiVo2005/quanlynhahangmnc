@@ -103,7 +103,7 @@ export async function POST(request: Request) {
 // PUT
 export async function PUT(request: Request) {
   try {
-    const { id, name, category, price, quantity, note, logNote } = await request.json();
+    const { id, name, category, price, quantity, note, logNote, isRelative } = await request.json();
 
     if (!id) {
       return Response.json({ error: 'Product ID is required' }, { status: 400 });
@@ -123,14 +123,11 @@ export async function PUT(request: Request) {
     }
 
     const priceValue = Number(price);
-    const quantityValue = Number(quantity);
-    const addedQuantity = quantityValue - currentProduct.Quantity;
+    const inputQty = Number(quantity);
+    const addedQuantity = isRelative ? inputQty : (inputQty - currentProduct.Quantity);
 
     if (priceValue < 0 || isNaN(priceValue)) {
       return Response.json({ error: 'Invalid price' }, { status: 400 });
-    }
-    if (quantityValue < 0 || isNaN(quantityValue)) {
-      return Response.json({ error: 'Invalid quantity' }, { status: 400 });
     }
 
     const updated = await prisma.product.update({
@@ -139,7 +136,7 @@ export async function PUT(request: Request) {
         Name: name,
         Category: category as ProductCategory,
         Price: priceValue,
-        Quantity: quantityValue,
+        Quantity: isRelative ? { increment: inputQty } : inputQty,
         Note: note,
         // Chỉ tạo log nếu có sự thay đổi về số lượng (Casing fix)
         InventoryLogs: addedQuantity !== 0 ? {
@@ -183,7 +180,7 @@ export async function PUT(request: Request) {
       name: updated.Name,
       category: updated.Category,
       price: Number(updated.Price),
-      quantity: quantityValue,
+      quantity: updated.Quantity,
       note: updated.Note,
       createdAt: updated.CreatedAt,
     });

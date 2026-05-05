@@ -102,6 +102,14 @@ export async function PUT(request: Request) {
     const newStatus = status || Status;
     if (newStatus === 'cancelled') {
       await prisma.$transaction(async (tx) => {
+        // Lấy thông tin session để có StoreId chính xác
+        const sessionData = await tx.roomSession.findUnique({
+          where: { Id: id },
+          select: { StoreId: true }
+        });
+
+        if (!sessionData) throw new Error('Session not found');
+
         // 1. Tìm tất cả các món đã gọi của phiên này
         const items = await tx.orderItem.findMany({
           where: { RoomSessionId: id }
@@ -112,6 +120,17 @@ export async function PUT(request: Request) {
           await tx.product.update({
             where: { Id: item.ProductId },
             data: { Quantity: { increment: item.Quantity } }
+          });
+
+          await (tx as any).inventoryLog.create({
+            data: {
+              Id: `RETURN-${Date.now()}-${item.Id}`,
+              ProductId: item.ProductId,
+              StoreId: sessionData.StoreId,
+              Quantity: item.Quantity,
+              Type: 'restock',
+              Note: `Hoàn kho do hủy phòng ${id}`
+            }
           });
         }
 
