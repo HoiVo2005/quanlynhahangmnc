@@ -210,7 +210,8 @@ export default function InventoryStatsPage() {
             const data = await res.json();
             setStats(Array.isArray(data.stats) ? data.stats : []);
             setLogs(Array.isArray(data.logs) ? data.logs : []);
-        } catch {
+        } catch (err) {
+            console.error('Lỗi tải thống kê kho:', err);
             toast.error('Lỗi khi tải dữ liệu thống kê kho');
         } finally {
             setIsLoading(false);

@@ -60,47 +60,36 @@ export async function GET(req: NextRequest) {
         /* 3. SALES FROM PAID INVOICES ONLY             */
         /* ───────────────────────────────────────────── */
 
-        // Tìm các phiên phòng BẮT ĐẦU trong kỳ và ĐÃ THANH TOÁN (có hóa đơn)
-        // Sử dụng StartTime thay vì CreatedAt của Invoice
-        const sessionsInPeriod = await prisma.roomSession.findMany({
-            where: {
-                StoreId: storeId,
-                StartTime: { gte: startDate, lte: endDate },
-                // Chỉ tính những phòng đã chốt (tránh tính nhầm hàng đang dùng trong phòng chưa thanh toán vào báo cáo doanh thu/bán chạy)
-                OR: [
-                    { Status: 'completed' },
-                    { Invoices: { some: { Status: 'paid' } } }
-                ]
-            },
-            select: { Id: true },
-        });
-        const sessionIdsInPeriod = sessionsInPeriod.map(s => s.Id);
-
-        // Tương tự cho mốc tính tồn đầu
-        const sessionsSinceStart = await prisma.roomSession.findMany({
-            where: {
-                StoreId: storeId,
-                StartTime: { gte: startDate },
-                OR: [
-                    { Status: 'completed' },
-                    { Invoices: { some: { Status: 'paid' } } }
-                ]
-            },
-            select: { Id: true },
-        });
-        const sessionIdsSinceStart = sessionsSinceStart.map(s => s.Id);
+        // Điều kiện lọc chung cho các phiên phòng hợp lệ (đã thanh toán hoặc hoàn tất)
+        const validSessionFilter = {
+            StoreId: storeId,
+            OR: [
+                { Status: 'completed' },
+                { Invoices: { some: { Status: 'paid' } } }
+            ]
+        };
 
         // Bán trong kỳ
         const salesInPeriod = await prisma.orderItem.groupBy({
             by: ['ProductId'],
-            where: { RoomSessionId: { in: sessionIdsInPeriod } },
+            where: {
+                RoomSession: {
+                    ...validSessionFilter,
+                    StartTime: { gte: startDate, lte: endDate }
+                }
+            },
             _sum: { Quantity: true },
         });
 
         // Bán từ mốc xem báo cáo đến hiện tại
         const salesSinceStart = await prisma.orderItem.groupBy({
             by: ['ProductId'],
-            where: { RoomSessionId: { in: sessionIdsSinceStart } },
+            where: {
+                RoomSession: {
+                    ...validSessionFilter,
+                    StartTime: { gte: startDate }
+                }
+            },
             _sum: { Quantity: true },
         });
 
@@ -221,7 +210,7 @@ export async function GET(req: NextRequest) {
                 totalRestocked,
                 totalSold: roomSales,
                 totalExported: exported,
-                totalQuantity,
+                totalDecrement: totalQuantity, // Đổi tên để khớp với interface ProductStat ở frontend
                 totalRevenue: totalQuantity * Number(p.Price || 0),
                 currentStock: p.Quantity, // Đây là số 330 thực tế trong DB
                 closingStock: closingStock, // Đây sẽ là số 378 cho ngày 1/5
