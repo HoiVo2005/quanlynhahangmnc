@@ -119,6 +119,18 @@ export async function GET(req: NextRequest) {
             _sum: { Quantity: true },
         });
 
+        // Takeaway riêng (Type='export') — tách khỏi 'gift' để metric "bán chạy"
+        // chỉ cộng doanh số thực: bán phòng + mang về (không tính tặng).
+        const takeawayInPeriod = await (prisma as any).inventoryLog.groupBy({
+            by: ['ProductId'],
+            where: {
+                StoreId: storeId,
+                CreatedAt: { gte: startDate, lte: endDate },
+                Type: 'export',
+            },
+            _sum: { Quantity: true },
+        });
+
         /* ─────────────────────────────────────────────────────── */
         /* 4. ACTIVITY FROM startDate → NOW (for opening stock)    */
         /*                                                         */
@@ -178,6 +190,9 @@ export async function GET(req: NextRequest) {
             const exportPeriod = exportsInPeriod.find((e: any) => e.ProductId === p.Id);
             const exported     = Math.abs(safe(exportPeriod?._sum?.Quantity));
 
+            const takeawayPeriod = takeawayInPeriod.find((t: any) => t.ProductId === p.Id);
+            const takeaway       = Math.abs(safe(takeawayPeriod?._sum?.Quantity));
+
             const restockPeriod   = restocksInPeriod.find((r: any) => r.ProductId === p.Id);
             const totalRestocked  = safe(restockPeriod?._sum?.Quantity);
 
@@ -209,6 +224,7 @@ export async function GET(req: NextRequest) {
                 openingStock:   Math.max(0, openingStock),
                 totalRestocked,
                 totalSold:      roomSales,
+                totalTakeaway:  takeaway,
                 totalExported:  exported,
                 totalDecrement,
                 totalRevenue:   roomSales * Number(p.Price || 0),  // bán phòng × giá hiện tại
@@ -218,12 +234,69 @@ export async function GET(req: NextRequest) {
         });
 
         /* ─────────────────────────────────────────────────────── */
+        /* 8b. DAILY SALES BREAKDOWN (per product, per VN day)     */
+        /*     Source: InventoryLog Type IN ('sale','export') —    */
+        /*     đều là log từ hóa đơn đã thanh toán (Status='paid').*/
+        /* ─────────────────────────────────────────────────────── */
+
+        const saleLogs = await (prisma as any).inventoryLog.findMany({
+            where: {
+                StoreId: storeId,
+                CreatedAt: { gte: startDate, lte: endDate },
+                Type: { in: ['sale', 'export'] },
+            },
+            include: { product: true },
+        });
+
+        const dailyMap = new Map<string, any>();
+        for (const log of saleLogs) {
+            // Quy đổi sang ngày VN (YYYY-MM-DD)
+            const vnDate = new Date(new Date(log.CreatedAt).getTime() + VN_OFFSET_MS);
+            const dateKey = vnDate.toISOString().slice(0, 10);
+            const key = `${dateKey}|${log.ProductId}`;
+
+            if (!dailyMap.has(key)) {
+                dailyMap.set(key, {
+                    date:        dateKey,
+                    productId:   log.ProductId,
+                    productName: log.product?.Name || 'Sản phẩm đã xóa',
+                    category:    log.product?.Category || '',
+                    price:       Number(log.product?.Price || 0),
+                    inRoom:      0,
+                    takeaway:    0,
+                });
+            }
+
+            const entry = dailyMap.get(key);
+            const qty = Math.abs(Number(log.Quantity || 0));
+            if (log.Type === 'sale') entry.inRoom += qty;
+            else if (log.Type === 'export') entry.takeaway += qty;
+        }
+
+        const dailyBreakdown = Array.from(dailyMap.values())
+            .map(e => ({
+                date:        e.date,
+                productId:   e.productId,
+                productName: e.productName,
+                category:    e.category,
+                inRoom:      e.inRoom,
+                takeaway:    e.takeaway,
+                total:       e.inRoom + e.takeaway,
+                revenue:     (e.inRoom + e.takeaway) * e.price,
+            }))
+            .sort((a, b) =>
+                b.date.localeCompare(a.date) ||
+                a.productName.localeCompare(b.productName, 'vi'),
+            );
+
+        /* ─────────────────────────────────────────────────────── */
         /* 9. RESPONSE                                             */
         /* ─────────────────────────────────────────────────────── */
 
         return NextResponse.json(
             {
                 stats,
+                dailyBreakdown,
                 logs: logs.map((l: any) => ({
                     id:          l.Id,
                     productName: l.product?.Name || 'Sản phẩm đã xóa',

@@ -32,6 +32,7 @@ interface ProductStat {
     openingStock: number;
     totalRestocked: number;
     totalSold: number;
+    totalTakeaway: number;
     totalExported: number;
     totalDecrement: number; // Đổi tên từ totalQuantity
     totalRevenue: number;
@@ -48,6 +49,17 @@ interface InventoryLog {
     note?: string;
 }
 
+interface DailyBreakdown {
+    date: string;          // YYYY-MM-DD (VN)
+    productId: string;
+    productName: string;
+    category: string;
+    inRoom: number;
+    takeaway: number;
+    total: number;
+    revenue: number;
+}
+
 /* ─── Constants ──────────────────────────────────────────────── */
 
 const CAT_LABELS: Record<string, string> = {
@@ -60,7 +72,6 @@ const CAT_LABELS: Record<string, string> = {
 const CHART_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#3b82f6'];
 
 const PERIOD_OPTIONS = [
-    { id: 'daily', label: 'Ngày' },
     { id: 'weekly', label: 'Tuần' },
     { id: 'monthly', label: 'Tháng' },
     { id: 'yearly', label: 'Năm' },
@@ -158,9 +169,10 @@ export default function InventoryStatsPage() {
     const { user } = useAuth();
     const [stores, setStores] = useState<Store[]>([]);
     const [selectedStoreId, setSelectedStoreId] = useState<string>('');
-    const [reportType, setReportType] = useState<PeriodType>('daily');
+    const [reportType, setReportType] = useState<PeriodType>('weekly');
     const [stats, setStats] = useState<ProductStat[]>([]);
     const [logs, setLogs] = useState<InventoryLog[]>([]);
+    const [dailyBreakdown, setDailyBreakdown] = useState<DailyBreakdown[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
@@ -210,6 +222,7 @@ export default function InventoryStatsPage() {
             const data = await res.json();
             setStats(Array.isArray(data.stats) ? data.stats : []);
             setLogs(Array.isArray(data.logs) ? data.logs : []);
+            setDailyBreakdown(Array.isArray(data.dailyBreakdown) ? data.dailyBreakdown : []);
         } catch (err) {
             console.error('Lỗi tải thống kê kho:', err);
             toast.error('Lỗi khi tải dữ liệu thống kê kho');
@@ -220,14 +233,20 @@ export default function InventoryStatsPage() {
 
     /* ── Derived data ─── */
 
-    const bestSellers = useMemo(
-        () => [...stats].sort((a, b) => b.totalSold - a.totalSold).slice(0, 5), // Sử dụng totalSold cho bán chạy nhất
+    // Tổng bán = bán phòng + mang về (không tính tặng).
+    const statsWithCombinedSold = useMemo(
+        () => stats.map(s => ({ ...s, combinedSold: s.totalSold + s.totalTakeaway })),
         [stats]
     );
 
+    const bestSellers = useMemo(
+        () => [...statsWithCombinedSold].sort((a, b) => b.combinedSold - a.combinedSold).slice(0, 5),
+        [statsWithCombinedSold]
+    );
+
     const slowMoving = useMemo(
-        () => [...stats].sort((a, b) => a.totalSold - b.totalSold).slice(0, 5), // Sử dụng totalSold cho bán chậm nhất
-        [stats]
+        () => [...statsWithCombinedSold].sort((a, b) => a.combinedSold - b.combinedSold).slice(0, 5),
+        [statsWithCombinedSold]
     );
 
     const lowStockProducts = useMemo(
@@ -237,14 +256,14 @@ export default function InventoryStatsPage() {
 
     const categoryData = useMemo(() => {
         const groups: Record<string, number> = {};
-        stats.forEach(s => {
-            groups[s.category] = (groups[s.category] || 0) + s.totalSold; // Sử dụng totalSold cho thống kê theo danh mục
+        statsWithCombinedSold.forEach(s => {
+            groups[s.category] = (groups[s.category] || 0) + s.combinedSold;
         });
         return Object.entries(groups).map(([key, value]) => ({
             name: CAT_LABELS[key] ?? 'Khác',
             value,
         }));
-    }, [stats]);
+    }, [statsWithCombinedSold]);
 
     const filteredStats = useMemo(
         () => stats.filter(s => s.productName.toLowerCase().includes(searchTerm.toLowerCase())),
@@ -256,6 +275,11 @@ export default function InventoryStatsPage() {
         [logs, searchTerm]
     );
 
+    const filteredDaily = useMemo(
+        () => dailyBreakdown.filter(d => d.productName.toLowerCase().includes(searchTerm.toLowerCase())),
+        [dailyBreakdown, searchTerm]
+    );
+
     /* ── CSV export ─── */
     const exportToCSV = () => {
         const isHistory = activeTab === 'history';
@@ -264,7 +288,7 @@ export default function InventoryStatsPage() {
 
         const headers = isHistory
             ? ['Ngày nhập', 'Sản phẩm', 'Biến động', 'Ghi chú', 'Trạng thái']
-            : ['Sản phẩm', 'Loại', 'Tồn đầu', 'Nhập trong kỳ', 'Đã bán', 'Xuất khác (tặng + mang về)', 'Doanh thu', 'Tồn cuối kỳ']; // Tiêu đề rõ ràng hơn
+            : ['Sản phẩm', 'Loại', 'Số lượng tổng (tạo + nhập)', 'Bán trong phòng', 'Xuất khác (phòng mang về)', 'Doanh thu', 'Số lượng còn lại'];
 
         const rows = isHistory
             ? logs.map(l => [
@@ -277,12 +301,11 @@ export default function InventoryStatsPage() {
             : stats.map(s => [
                 s.productName,
                 CAT_LABELS[s.category] ?? s.category,
-                s.openingStock,
-                s.totalRestocked,
-                s.totalSold, // "Đã bán" trong CSV là totalSold
-                s.totalExported, // "Xuất khác" trong CSV
+                s.openingStock + s.totalRestocked,
+                s.totalSold,
+                s.totalExported,
                 s.totalRevenue,
-                s.currentStock,
+                s.closingStock,
             ]);
 
         const csv = '\ufeff' + [headers, ...rows].map(r => r.join(',')).join('\n');
@@ -439,7 +462,7 @@ export default function InventoryStatsPage() {
                         icon={<TrendingUp className="w-5 h-5 text-blue-500" />}
                         label="Bán chạy nhất"
                         value={bestSellers[0]?.productName || '---'}
-                        sub={`Số lượng: ${bestSellers[0]?.totalSold ?? 0}`}
+                        sub={`Số lượng: ${bestSellers[0]?.combinedSold ?? 0}`}
                         subColor="text-blue-500"
                     />
                     <KpiCard
@@ -447,7 +470,7 @@ export default function InventoryStatsPage() {
                         icon={<TrendingDown className="w-5 h-5 text-rose-500" />}
                         label="Bán chậm nhất"
                         value={slowMoving[0]?.productName || '---'}
-                        sub={`Số lượng: ${slowMoving[0]?.totalSold ?? 0}`}
+                        sub={`Số lượng: ${slowMoving[0]?.combinedSold ?? 0}`}
                         subColor="text-rose-500"
                     />
                     <KpiCard
@@ -485,7 +508,7 @@ export default function InventoryStatsPage() {
                                             tickFormatter={v => v.length > 14 ? v.slice(0, 14) + '…' : v}
                                         /> {/* Đã bỏ vertical={false} vì là mặc định cho biểu đồ dọc */}
                                         <Tooltip content={<CustomBarTooltip />} cursor={{ fill: '#f9fafb' }} />
-                                        <Bar dataKey="totalSold" fill="#10b981" radius={[0, 6, 6, 0]} barSize={22} /> {/* Sử dụng totalSold */}
+                                        <Bar dataKey="combinedSold" fill="#10b981" radius={[0, 6, 6, 0]} barSize={22} />
                                     </BarChart>
                                 </ResponsiveContainer>
                             </div>
@@ -550,11 +573,11 @@ export default function InventoryStatsPage() {
                             <table className="w-full">
                                 <thead className="bg-slate-50 border-b border-slate-100">
                                     <tr>
-                                        {['Sản phẩm', 'Loại', 'Tồn đầu', `Nhập (${reportType})`, `Đã bán`, `Xuất khác (Tặng + mang về)`, 'Doanh thu', 'Tồn cuối kỳ'].map((h, i) => (
+                                        {['Sản phẩm', 'Loại', 'Số lượng tổng (tạo + nhập)', 'Bán trong phòng', 'Xuất khác (phòng mang về)', 'Doanh thu', 'Số lượng còn lại'].map((h, i) => (
                                             <th
                                                 key={h}
                                                 className={`px-5 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider
-                                                    ${i >= 2 && i <= 5 ? 'text-center' : i === 6 ? 'text-right' : i === 7 ? 'text-center' : 'text-left'}`}
+                                                    ${i >= 2 && i <= 4 ? 'text-center' : i === 5 ? 'text-right' : i === 6 ? 'text-center' : 'text-left'}`}
                                             >
                                                 {h}
                                             </th>
@@ -564,34 +587,36 @@ export default function InventoryStatsPage() {
                                 <tbody className="divide-y divide-slate-50">
                                     {isLoading ? (
                                         <tr>
-                                            <td colSpan={8} className="px-5 py-10 text-center text-slate-400 text-sm italic">
+                                            <td colSpan={7} className="px-5 py-10 text-center text-slate-400 text-sm italic">
                                                 Đang tải dữ liệu...
                                             </td>
                                         </tr>
                                     ) : filteredStats.length === 0 ? (
                                         <tr>
-                                            <td colSpan={8} className="px-5 py-10 text-center text-slate-400 text-sm italic">
+                                            <td colSpan={7} className="px-5 py-10 text-center text-slate-400 text-sm italic">
                                                 Không có dữ liệu thống kê cho giai đoạn này
                                             </td>
                                         </tr>
-                                    ) : filteredStats.map(item => (
-                                        <tr key={item.productId} className="hover:bg-slate-50/60 transition-colors">
-                                            <td className="px-5 py-3 text-[13px] font-bold text-slate-900">{item.productName}</td>
-                                            <td className="px-5 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                                                {CAT_LABELS[item.category] ?? item.category}
-                                            </td>
-                                            <td className="px-5 py-3 text-[13px] text-center font-semibold text-slate-600">{item.openingStock}</td>
-                                            <td className="px-5 py-3 text-[13px] text-center font-bold text-blue-600">+{item.totalRestocked}</td>
-                                            <td className="px-5 py-3 text-[13px] text-center font-bold text-emerald-600">{item.totalSold}</td>
-                                            <td className="px-5 py-3 text-[13px] text-center font-bold text-orange-500">{item.totalExported}</td>
-                                            <td className="px-5 py-3 text-[13px] text-right font-semibold text-slate-700">
-                                                {item.totalRevenue.toLocaleString('vi-VN')}đ
-                                            </td>
-                                            <td className="px-5 py-3 text-center">
-                                                <StockBadge stock={item.closingStock} />
-                                            </td>
-                                        </tr>
-                                    ))}
+                                    ) : filteredStats.map(item => {
+                                        const totalQuantity = item.openingStock + item.totalRestocked;
+                                        return (
+                                            <tr key={item.productId} className="hover:bg-slate-50/60 transition-colors">
+                                                <td className="px-5 py-3 text-[13px] font-bold text-slate-900">{item.productName}</td>
+                                                <td className="px-5 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                                                    {CAT_LABELS[item.category] ?? item.category}
+                                                </td>
+                                                <td className="px-5 py-3 text-[13px] text-center font-bold text-blue-600">{totalQuantity}</td>
+                                                <td className="px-5 py-3 text-[13px] text-center font-bold text-emerald-600">{item.totalSold}</td>
+                                                <td className="px-5 py-3 text-[13px] text-center font-bold text-orange-500">{item.totalExported}</td>
+                                                <td className="px-5 py-3 text-[13px] text-right font-semibold text-slate-700">
+                                                    {item.totalRevenue.toLocaleString('vi-VN')}đ
+                                                </td>
+                                                <td className="px-5 py-3 text-center">
+                                                    <StockBadge stock={item.closingStock} />
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
                                 </tbody>
                             </table>
                         ) : (
@@ -643,6 +668,72 @@ export default function InventoryStatsPage() {
                         )}
                     </div>
                 </div>
+
+                {/* Daily breakdown table — only on sales tab */}
+                {activeTab === 'sales' && (
+                    <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+                        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-4">
+                            <h2 className="text-[13px] font-bold text-slate-800 flex items-center gap-2">
+                                <Calendar className="w-4 h-4 text-indigo-500" />
+                                Sản lượng bán theo ngày <span className="text-slate-400 font-medium">(hóa đơn đã thanh toán)</span>
+                            </h2>
+                            <span className="text-[11px] text-slate-400 font-semibold">
+                                {filteredDaily.length} dòng
+                            </span>
+                        </div>
+
+                        <div className="overflow-x-auto max-h-[480px]">
+                            <table className="w-full">
+                                <thead className="bg-slate-50 border-b border-slate-100 sticky top-0 z-10">
+                                    <tr>
+                                        {['Ngày', 'Sản phẩm', 'Loại', 'Bán phòng', 'Mang về', 'Tổng', 'Doanh thu'].map((h, i) => (
+                                            <th
+                                                key={h}
+                                                className={`px-5 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider
+                                                    ${i >= 3 && i <= 5 ? 'text-center' : i === 6 ? 'text-right' : 'text-left'}`}
+                                            >
+                                                {h}
+                                            </th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-50">
+                                    {isLoading ? (
+                                        <tr>
+                                            <td colSpan={7} className="px-5 py-10 text-center text-slate-400 text-sm italic">
+                                                Đang tải dữ liệu...
+                                            </td>
+                                        </tr>
+                                    ) : filteredDaily.length === 0 ? (
+                                        <tr>
+                                            <td colSpan={7} className="px-5 py-10 text-center text-slate-400 text-sm italic">
+                                                Chưa có hóa đơn bán hàng nào trong kỳ này
+                                            </td>
+                                        </tr>
+                                    ) : filteredDaily.map(d => (
+                                        <tr key={`${d.date}|${d.productId}`} className="hover:bg-slate-50/60 transition-colors">
+                                            <td className="px-5 py-3 text-[12px] font-semibold text-slate-600">
+                                                {new Date(d.date + 'T00:00:00+07:00').toLocaleDateString('vi-VN', {
+                                                    weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric',
+                                                })}
+                                            </td>
+                                            <td className="px-5 py-3 text-[13px] font-bold text-slate-900">{d.productName}</td>
+                                            <td className="px-5 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                                                {CAT_LABELS[d.category] ?? d.category}
+                                            </td>
+                                            <td className="px-5 py-3 text-[13px] text-center font-bold text-emerald-600">{d.inRoom}</td>
+                                            <td className="px-5 py-3 text-[13px] text-center font-bold text-orange-500">{d.takeaway}</td>
+                                            <td className="px-5 py-3 text-[13px] text-center font-extrabold text-slate-900">{d.total}</td>
+                                            <td className="px-5 py-3 text-[13px] text-right font-semibold text-slate-700">
+                                                {d.revenue.toLocaleString('vi-VN')}đ
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )}
             </main>
 
             {/* ── Low-stock warning modal ── */}
