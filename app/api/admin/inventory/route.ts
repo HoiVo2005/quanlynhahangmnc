@@ -191,12 +191,42 @@ export async function GET(req: NextRequest) {
             _sum: { Quantity: true },
         });
 
-        const decrementsSinceStart = await (prisma as any).inventoryLog.groupBy({
+        // Decrement từ startDate đến nay = bán phòng (hóa đơn paid) + xuất khác (log).
+        // Dùng paid invoice cho phần bán phòng để đồng bộ với cột "Đã bán" mới —
+        // tránh lệch openingStock khi log Type='sale' không đồng nhất với
+        // OrderItem có hóa đơn paid (vd: hóa đơn cũ chưa backfill log).
+        const paidSalesSinceStart = await prisma.orderItem.findMany({
+            where: {
+                RoomSession: {
+                    StoreId: storeId,
+                    RoomId: { not: 'EXTERNAL' },
+                    Invoice: {
+                        is: {
+                            Status: 'paid',
+                            DeletedAt: null,
+                            CreatedAt: { gte: startDate },
+                        },
+                    },
+                },
+            },
+            select: { ProductId: true, Quantity: true },
+        });
+
+        const paidSalesByProductSinceStart = new Map<string, number>();
+        for (const it of paidSalesSinceStart) {
+            paidSalesByProductSinceStart.set(
+                it.ProductId,
+                (paidSalesByProductSinceStart.get(it.ProductId) || 0) + it.Quantity,
+            );
+        }
+
+        const nonSaleDecrementsSinceStart = await (prisma as any).inventoryLog.groupBy({
             by: ['ProductId'],
             where: {
                 StoreId: storeId,
                 CreatedAt: { gte: startDate },
                 Quantity: { lt: 0 },
+                Type: { not: 'sale' },
             },
             _sum: { Quantity: true },
         });
@@ -240,16 +270,16 @@ export async function GET(req: NextRequest) {
             const totalRestockedLifetime = safe(restockAll?._sum?.Quantity);
 
             // ── Opening stock ──────────────────────────────────
-            // Đảo ngược toàn bộ activity từ startDate tới NOW dựa hoàn toàn
-            // vào InventoryLog (single source of truth):
-            //   openingStock = currentStock
-            //                + abs(decrements từ startDate đến NOW)
-            //                - increments từ startDate đến NOW
-            const incRec   = incrementsSinceStart.find((i: any) => i.ProductId === p.Id);
+            // Đảo ngược activity từ startDate tới NOW để có tồn đầu kỳ:
+            //   decrements = bán phòng paid (OrderItem) + xuất khác (log)
+            //   increments = nhập kho (log Quantity > 0)
+            const incRec = incrementsSinceStart.find((i: any) => i.ProductId === p.Id);
             const totalIncSinceStart = safe(incRec?._sum?.Quantity);
 
-            const decRec   = decrementsSinceStart.find((d: any) => d.ProductId === p.Id);
-            const totalDecSinceStart = Math.abs(safe(decRec?._sum?.Quantity));
+            const paidSinceStart = paidSalesByProductSinceStart.get(p.Id) ?? 0;
+            const nonSaleDecRec = nonSaleDecrementsSinceStart.find((d: any) => d.ProductId === p.Id);
+            const nonSaleDecSinceStart = Math.abs(safe(nonSaleDecRec?._sum?.Quantity));
+            const totalDecSinceStart = paidSinceStart + nonSaleDecSinceStart;
 
             const openingStock =
                 p.Quantity
@@ -257,8 +287,11 @@ export async function GET(req: NextRequest) {
                 - totalIncSinceStart;  // trừ đi mọi thứ đã nhập kể từ startDate
 
             // ── Closing stock ──────────────────────────────────
+            // Theo yêu cầu: Còn lại = Tổng (tạo + nhập) lifetime − (Bán phòng + Xuất khác).
+            // Note: trộn scope (lifetime nhập × in-period bán) — số có thể không
+            // bằng tồn kho thực ở DB nếu kỳ chọn không phải toàn bộ thời gian.
             const totalDecrement = roomSales + exported;
-            const closingStock   = openingStock + totalRestocked - totalDecrement;
+            const closingStock   = totalRestockedLifetime - totalDecrement;
 
             return {
                 productId:      p.Id,
