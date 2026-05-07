@@ -107,16 +107,43 @@ export async function GET(req: NextRequest) {
             _sum: { Quantity: true },
         });
 
-        // Bán trong phòng (Type='sale') — tách riêng để hiển thị + tính revenue
-        const salesInPeriod = await (prisma as any).inventoryLog.groupBy({
-            by: ['ProductId'],
+        // "Bán trong phòng" (đã bán): chỉ tính OrderItem thuộc hóa đơn
+        // Status='paid' và chưa bị xóa mềm (DeletedAt = NULL). Khác với
+        // InventoryLog Type='sale' ở chỗ: khi hóa đơn bị đẩy vào thùng rác,
+        // log vẫn còn nhưng sẽ KHÔNG được tính ở đây.
+        // Loại trừ phòng ảo 'EXTERNAL' để không lẫn với takeaway/gift.
+        // Mốc thời gian dùng Invoice.CreatedAt (lúc thanh toán).
+        const paidRoomOrderItems = await prisma.orderItem.findMany({
             where: {
-                StoreId: storeId,
-                CreatedAt: { gte: startDate, lte: endDate },
-                Type: 'sale',
+                RoomSession: {
+                    StoreId: storeId,
+                    RoomId: { not: 'EXTERNAL' },
+                    Invoice: {
+                        is: {
+                            Status: 'paid',
+                            DeletedAt: null,
+                            CreatedAt: { gte: startDate, lte: endDate },
+                        },
+                    },
+                },
             },
-            _sum: { Quantity: true },
+            select: {
+                ProductId: true,
+                Quantity: true,
+                Price: true,
+                RoomSession: {
+                    select: { Invoice: { select: { CreatedAt: true } } },
+                },
+            },
         });
+
+        const paidSalesByProduct = new Map<string, { qty: number; revenue: number }>();
+        for (const it of paidRoomOrderItems) {
+            const cur = paidSalesByProduct.get(it.ProductId) ?? { qty: 0, revenue: 0 };
+            cur.qty += it.Quantity;
+            cur.revenue += it.Quantity * Number(it.Price);
+            paidSalesByProduct.set(it.ProductId, cur);
+        }
 
         // Xuất khác (mang về, tặng, điều chỉnh giảm) — log Quantity<0 không phải sale
         const exportsInPeriod = await (prisma as any).inventoryLog.groupBy({
@@ -194,9 +221,11 @@ export async function GET(req: NextRequest) {
         const safe = (n: any) => Number(n || 0);
 
         const stats = products.map(p => {
-            // ── In-period numbers (đều đọc từ InventoryLog) ────
-            const salePeriod   = salesInPeriod.find((s: any) => s.ProductId === p.Id);
-            const roomSales    = Math.abs(safe(salePeriod?._sum?.Quantity)); // log sale âm
+            // ── In-period numbers ────
+            // "Đã bán" lấy từ OrderItem có hóa đơn paid (chưa xóa).
+            const paid       = paidSalesByProduct.get(p.Id) ?? { qty: 0, revenue: 0 };
+            const roomSales  = paid.qty;
+            const roomRevenue = paid.revenue;
 
             const exportPeriod = exportsInPeriod.find((e: any) => e.ProductId === p.Id);
             const exported     = Math.abs(safe(exportPeriod?._sum?.Quantity));
@@ -242,7 +271,7 @@ export async function GET(req: NextRequest) {
                 totalTakeaway:  takeaway,
                 totalExported:  exported,
                 totalDecrement,
-                totalRevenue:   roomSales * Number(p.Price || 0),  // bán phòng × giá hiện tại
+                totalRevenue:   roomRevenue,  // tính theo giá trên OrderItem (giá thật lúc bán)
                 currentStock:   p.Quantity,
                 closingStock:   Math.max(0, closingStock),
             };
@@ -250,42 +279,57 @@ export async function GET(req: NextRequest) {
 
         /* ─────────────────────────────────────────────────────── */
         /* 8b. DAILY SALES BREAKDOWN (per product, per VN day)     */
-        /*     Source: InventoryLog Type IN ('sale','export') —    */
-        /*     đều là log từ hóa đơn đã thanh toán (Status='paid').*/
+        /*     - "Bán phòng": từ OrderItem có hóa đơn Status='paid'*/
+        /*       (chưa xóa). Mốc thời gian = Invoice.CreatedAt.    */
+        /*     - "Mang về": từ InventoryLog Type='export'.         */
         /* ─────────────────────────────────────────────────────── */
 
-        const saleLogs = await (prisma as any).inventoryLog.findMany({
+        const exportLogs = await (prisma as any).inventoryLog.findMany({
             where: {
                 StoreId: storeId,
                 CreatedAt: { gte: startDate, lte: endDate },
-                Type: { in: ['sale', 'export'] },
+                Type: 'export',
             },
             include: { product: true },
         });
 
+        const productIndex = new Map(products.map(p => [p.Id, p]));
         const dailyMap = new Map<string, any>();
-        for (const log of saleLogs) {
-            // Quy đổi sang ngày VN (YYYY-MM-DD)
-            const vnDate = new Date(new Date(log.CreatedAt).getTime() + VN_OFFSET_MS);
-            const dateKey = vnDate.toISOString().slice(0, 10);
-            const key = `${dateKey}|${log.ProductId}`;
 
+        const ensureEntry = (key: string, dateKey: string, productId: string, prod: any) => {
             if (!dailyMap.has(key)) {
                 dailyMap.set(key, {
                     date:        dateKey,
-                    productId:   log.ProductId,
-                    productName: log.product?.Name || 'Sản phẩm đã xóa',
-                    category:    log.product?.Category || '',
-                    price:       Number(log.product?.Price || 0),
+                    productId,
+                    productName: prod?.Name || 'Sản phẩm đã xóa',
+                    category:    prod?.Category || '',
                     inRoom:      0,
                     takeaway:    0,
+                    revenue:     0,
                 });
             }
+            return dailyMap.get(key);
+        };
 
-            const entry = dailyMap.get(key);
+        for (const it of paidRoomOrderItems) {
+            const stamp = it.RoomSession?.Invoice?.CreatedAt ?? new Date();
+            const vnDate = new Date(new Date(stamp).getTime() + VN_OFFSET_MS);
+            const dateKey = vnDate.toISOString().slice(0, 10);
+            const key = `${dateKey}|${it.ProductId}`;
+            const entry = ensureEntry(key, dateKey, it.ProductId, productIndex.get(it.ProductId));
+            entry.inRoom += it.Quantity;
+            entry.revenue += it.Quantity * Number(it.Price);
+        }
+
+        for (const log of exportLogs) {
+            const vnDate = new Date(new Date(log.CreatedAt).getTime() + VN_OFFSET_MS);
+            const dateKey = vnDate.toISOString().slice(0, 10);
+            const key = `${dateKey}|${log.ProductId}`;
+            const prod = productIndex.get(log.ProductId) ?? log.product;
+            const entry = ensureEntry(key, dateKey, log.ProductId, prod);
             const qty = Math.abs(Number(log.Quantity || 0));
-            if (log.Type === 'sale') entry.inRoom += qty;
-            else if (log.Type === 'export') entry.takeaway += qty;
+            entry.takeaway += qty;
+            entry.revenue += qty * Number(prod?.Price || 0);
         }
 
         const dailyBreakdown = Array.from(dailyMap.values())
@@ -297,7 +341,7 @@ export async function GET(req: NextRequest) {
                 inRoom:      e.inRoom,
                 takeaway:    e.takeaway,
                 total:       e.inRoom + e.takeaway,
-                revenue:     (e.inRoom + e.takeaway) * e.price,
+                revenue:     e.revenue,
             }))
             .sort((a, b) =>
                 b.date.localeCompare(a.date) ||
