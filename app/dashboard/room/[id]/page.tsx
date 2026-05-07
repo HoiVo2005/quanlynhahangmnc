@@ -2732,16 +2732,26 @@ export default function RoomPage() {
       {session && (
         <div className="hidden print:block w-[80mm] mx-auto px-4 pt-2 pb-4 bg-white text-black font-bold"
           style={{
-            fontFamily: 'monospace',
+            fontFamily: "'Courier New', Consolas, monospace",
             WebkitFontSmoothing: 'none',
             MozOsxFontSmoothing: 'unset',
-            textRendering: 'optimizeSpeed'
+            textRendering: 'geometricPrecision'
           }}>
           <style dangerouslySetInnerHTML={{
             __html: `
-            @media print { 
-              body { -webkit-print-color-adjust: exact; } 
-              * { color: #000 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; text-shadow: none !important; }
+            @media print {
+              body { -webkit-print-color-adjust: exact; }
+              * {
+                color: #000 !important;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+                text-shadow: none !important;
+                -webkit-font-smoothing: none !important;
+                -moz-osx-font-smoothing: unset !important;
+                font-smooth: never !important;
+                text-rendering: geometricPrecision !important;
+                font-weight: 700 !important;
+              }
               @page { margin: 0; size: 80mm auto; }
             }
           `
