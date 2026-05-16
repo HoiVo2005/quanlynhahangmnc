@@ -172,9 +172,10 @@ export default function Dashboard() {
   useEffect(() => {
     const handleFocus = () => {
       const now = Date.now();
-      // Tăng lên 5 phút (300.000ms). Dashboard chỉ cần cái nhìn tổng quan, 
-      // không cần cập nhật từng giây như trong phòng.
-      if (selectedStoreId && (now - lastDashboardFetchRef.current > 300000)) {
+      // Throttle bằng TTL edge cache (10s): trong 10s đầu hầu hết request
+      // trả từ CDN nên không tốn function invoke; sau 10s cache hết hạn,
+      // refetch để dashboard phản ánh trạng thái phòng mới mở.
+      if (selectedStoreId && (now - lastDashboardFetchRef.current > 10000)) {
         fetchRooms(selectedStoreId);
         lastDashboardFetchRef.current = now;
       }
